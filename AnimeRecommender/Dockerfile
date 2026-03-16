@@ -1,44 +1,70 @@
-## Parent image - using Python 3.12 (required by project)
-FROM python:3.12-slim
+## Multi-stage build for smaller image size
+## Stage 1: Builder
+FROM python:3.12-slim AS builder
 
-## Essential environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    # Set UV_CACHE_DIR to leverage Docker layer caching
-    UV_CACHE_DIR=/root/.cache/uv \
-    # Ensure uv uses the cache directory
-    UV_LINK_MODE=copy
-
-## Work directory inside the docker container
-WORKDIR /app
-
-## Installing system dependencies
-RUN apt-get update && apt-get install -y \
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-## Install uv - faster Python package installer
+# Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-## Copy dependency files first for better caching
+# Set work directory
+WORKDIR /app
+
+# Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-## Install dependencies using uv sync
-# --frozen: Use uv.lock without updating it (reproducible builds)
-# --no-dev: Skip development dependencies (smaller production image)
-RUN uv sync --frozen --no-dev
+# Install dependencies with optimizations
+# --no-dev: Skip dev dependencies
+# --no-cache: Don't use cache (smaller image)
+RUN uv sync --frozen --no-dev --no-cache
 
-## Copy application code
+## Stage 2: Runtime (much smaller)
+FROM python:3.12-slim
+
+# Install only runtime dependencies (no build tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Install uv for running the app
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    # Disable transformers cache to save space
+    TRANSFORMERS_CACHE=/tmp/.cache \
+    # Disable HF hub cache
+    HF_HOME=/tmp/.cache
+
+WORKDIR /app
+
+# Copy virtual environment from builder
+COPY --from=builder /root/.local /root/.local
+COPY --from=builder /app/.venv /app/.venv
+
+# Copy application code
 COPY . .
 
-## Make sure the app can find the modules
-ENV PYTHONPATH=/app
+# Create non-root user for security
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+USER appuser
 
-## Expose the Streamlit port
+# Expose Streamlit port
 EXPOSE 8501
 
-## Run the app using uv to ensure correct environment
-# Using uv run ensures we use the virtual environment created by uv
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+
+# Run the app
 CMD ["uv", "run", "streamlit", "run", "app/app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]

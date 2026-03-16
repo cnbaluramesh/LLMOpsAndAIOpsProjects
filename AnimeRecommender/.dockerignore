@@ -1,4 +1,4 @@
-# Python
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
@@ -18,7 +18,7 @@ ENV/
 env/
 *.venv
 
-# uv
+# uv cache
 .uv/
 
 # IDE
@@ -37,23 +37,31 @@ Thumbs.db
 .gitignore
 .gitattributes
 
-# Project specific
+# Model caches (these are downloaded at runtime, not build time)
 chroma_db/
+.cache/
 *.db
-*.log
+
+# Data files
+data/*.csv
+data/*.json
+data/*.xlsx
 
 # Documentation
 README.md
 docs/
 *.md
+LICENSE
 
-# Data files (if any)
-data/*.csv
-data/*.json
-data/*.xlsx
+# Test files
+tests/
+test_*.py
 
-# Cache and temporary files
-.cache/
-*.cache
+# Logs
+*.log
+logs/
+
+# Temporary files
 tmp/
 temp/
+*.tmp
