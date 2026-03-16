@@ -1,5 +1,5 @@
-## Multi-stage build for smaller image size (CPU-only - no GPU)
-## This Dockerfile prevents CUDA dependencies and reduces size from 16GB to ~1-2GB
+## Multi-stage build using uv (optimized for CPU-only, no CUDA)
+## Reduces image size from 16GB to ~1-2GB by excluding CUDA dependencies
 
 ## Stage 1: Builder
 FROM python:3.12-slim AS builder
@@ -21,12 +21,13 @@ WORKDIR /app
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-# Install CPU-only PyTorch first (before other dependencies)
+# Install CPU-only PyTorch FIRST (before uv sync)
 # This prevents CUDA packages from being installed
+# Install to system so uv sync sees it and doesn't pull CUDA version
 RUN uv pip install --no-cache --system torch --index-url https://download.pytorch.org/whl/cpu
 
-# Install remaining dependencies
-# UV_LINK_MODE=copy reduces image size
+# Install all dependencies using uv sync
+# This creates .venv virtual environment
 ENV UV_LINK_MODE=copy
 RUN uv sync --frozen --no-dev
 
@@ -50,13 +51,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # Disable model caches to save space
     TRANSFORMERS_CACHE=/tmp/.cache \
     HF_HOME=/tmp/.cache \
-    TORCH_HOME=/tmp/.torch
+    TORCH_HOME=/tmp/.torch \
+    # Add venv to PATH
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
-# Copy virtual environment and python packages from builder
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=builder /root/.local /root/.local
+# Copy ONLY the .venv virtual environment from builder
+# Don't copy system packages or .local
 COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code
@@ -74,5 +76,5 @@ EXPOSE 8501
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8501/_stcore/health || exit 1
 
-# Run the app
+# Run the app - uv run automatically uses .venv
 CMD ["uv", "run", "streamlit", "run", "app/app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
