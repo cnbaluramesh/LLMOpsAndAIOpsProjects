@@ -1,4 +1,6 @@
-## Multi-stage build for smaller image size
+## Multi-stage build for smaller image size (CPU-only - no GPU)
+## This Dockerfile prevents CUDA dependencies and reduces size from 16GB to ~1-2GB
+
 ## Stage 1: Builder
 FROM python:3.12-slim AS builder
 
@@ -7,7 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
@@ -18,10 +21,14 @@ WORKDIR /app
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies with optimizations
-# --no-dev: Skip dev dependencies
-# --no-cache: Don't use cache (smaller image)
-RUN uv sync --frozen --no-dev --no-cache
+# Install CPU-only PyTorch first (before other dependencies)
+# This prevents CUDA packages from being installed
+RUN uv pip install --no-cache --system torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining dependencies
+# UV_LINK_MODE=copy reduces image size
+ENV UV_LINK_MODE=copy
+RUN uv sync --frozen --no-dev
 
 ## Stage 2: Runtime (much smaller)
 FROM python:3.12-slim
@@ -40,14 +47,15 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
-    # Disable transformers cache to save space
+    # Disable model caches to save space
     TRANSFORMERS_CACHE=/tmp/.cache \
-    # Disable HF hub cache
-    HF_HOME=/tmp/.cache
+    HF_HOME=/tmp/.cache \
+    TORCH_HOME=/tmp/.torch
 
 WORKDIR /app
 
-# Copy virtual environment from builder
+# Copy virtual environment and python packages from builder
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /root/.local /root/.local
 COPY --from=builder /app/.venv /app/.venv
 

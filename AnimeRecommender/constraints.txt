@@ -1,0 +1,20 @@
+# CPU-only constraints to prevent CUDA dependencies
+# This prevents installation of nvidia-* packages and reduces Docker size from 16GB to ~1-2GB
+
+# Force CPU-only PyTorch
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Exclude all CUDA packages
+nvidia-cuda-runtime-cu12<0.0.0
+nvidia-cuda-nvrtc-cu12<0.0.0
+nvidia-cudnn-cu12<0.0.0
+nvidia-cublas-cu12<0.0.0
+nvidia-cufft-cu12<0.0.0
+nvidia-curand-cu12<0.0.0
+nvidia-cusolver-cu12<0.0.0
+nvidia-cusparse-cu12<0.0.0
+nvidia-cudnn-cu12<0.0.0
+nvidia-cufft-cu12<0.0.0
+nvidia-cusparse-cu12<0.0.0
+nvidia-cuda-nvrtc-cu12<0.0.0
+nvidia-nvjitlink-cu12<0.0.0
