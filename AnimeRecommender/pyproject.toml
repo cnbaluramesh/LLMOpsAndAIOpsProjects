@@ -1,0 +1,18 @@
+[project]
+name = "animerecommender"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain",
+    "langchain-community",
+    "langchain_groq",
+    "langchain-chroma",
+    "streamlit",
+    "pandas",
+    "python-dotenv",
+    "sentence-transformers",
+    "langchain_huggingface",
+    "langchain-classic",
+]

@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+*.venv
+
+# uv
+.uv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Project specific
+chroma_db/
+*.db
+*.log
+
+# Documentation
+README.md
+docs/
+*.md
+
+# Data files (if any)
+data/*.csv
+data/*.json
+data/*.xlsx
+
+# Cache and temporary files
+.cache/
+*.cache
+tmp/
+temp/
