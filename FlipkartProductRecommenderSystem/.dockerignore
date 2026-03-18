@@ -1,3 +1,4 @@
+venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -6,5 +7,12 @@ __pycache__/
 .git
 .gitignore
 Dockerfile
+
+# BIG FILES
 data/
+*.csv
+*.parquet
+
+# OPTIONAL
+models/
 notebooks/

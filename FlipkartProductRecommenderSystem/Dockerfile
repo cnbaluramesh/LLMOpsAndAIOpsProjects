@@ -12,10 +12,16 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip install --upgrade pip setuptools wheel
 
-# ✅ Fix here
 COPY setup.py requirements.txt ./
 
+# 🔥 FORCE CPU TORCH (IMPORTANT)
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install rest
 RUN pip install --no-cache-dir -e .
+
+# Clean cache
+RUN rm -rf /root/.cache
 
 COPY . .
 
