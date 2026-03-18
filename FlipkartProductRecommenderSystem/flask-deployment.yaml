@@ -16,8 +16,8 @@ spec:
     spec:
       containers:
       - name: flask-container
-        image: flask-app:latest
-        imagePullPolicy: IfNotPresent
+        image: flipkart-app:latest
+        imagePullPolicy: Never
         ports:
           - containerPort: 5000
         envFrom:
