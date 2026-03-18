@@ -1,0 +1,225 @@
+from flask import render_template, Flask, request, Response, g
+from prometheus_client import (
+    Counter, Histogram, Gauge,
+    generate_latest, CONTENT_TYPE_LATEST
+)
+from flipkart.data_ingestion import DataIngestor
+from flipkart.rag_chain import RAGChainBuilder
+from dotenv import load_dotenv
+from functools import wraps
+import time
+
+load_dotenv()
+
+# =========================
+# 🔥 CORE METRICS
+# =========================
+
+REQUEST_COUNT = Counter(
+    "http_requests_total",
+    "Total HTTP Requests",
+    ["method", "endpoint", "status"]
+)
+
+REQUEST_LATENCY = Histogram(
+    "http_request_latency_seconds",
+    "HTTP request latency",
+    ["method", "endpoint"],
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5]
+)
+
+ACTIVE_REQUESTS = Gauge(
+    "active_requests",
+    "Number of active requests"
+)
+
+ERROR_COUNT = Counter(
+    "app_errors_total",
+    "Total application errors",
+    ["endpoint"]
+)
+
+# =========================
+# 🚀 API PERFORMANCE METRICS (NEW)
+# =========================
+
+api_calls = Counter(
+    'api_calls_total',
+    'Total API calls',
+    ['service', 'endpoint', 'status']
+)
+
+api_latency = Histogram(
+    'api_latency_seconds',
+    'API call latency',
+    ['service', 'endpoint'],
+    buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5]
+)
+
+api_errors = Counter(
+    'api_errors_total',
+    'API errors',
+    ['service', 'error_type']
+)
+
+concurrent_requests = Gauge(
+    'concurrent_api_requests',
+    'Number of concurrent API requests',
+    ['service']
+)
+
+# =========================
+# 🧠 LLM / RAG METRICS
+# =========================
+
+RAG_LATENCY = Histogram(
+    "rag_chain_latency_seconds",
+    "RAG chain response time",
+    buckets=[0.1, 0.5, 1, 2, 5, 10]
+)
+
+VECTOR_DB_LATENCY = Histogram(
+    "vector_db_latency_seconds",
+    "Vector DB query latency",
+    ["operation"],
+    buckets=[0.01, 0.05, 0.1, 0.25, 0.5]
+)
+
+# =========================
+# 🎯 DECORATOR (SYNC)
+# =========================
+
+def track_api_call(service: str, endpoint: str):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            concurrent_requests.labels(service=service).inc()
+            start_time = time.time()
+            status = 'success'
+
+            try:
+                return func(*args, **kwargs)
+
+            except Exception as e:
+                status = 'error'
+                api_errors.labels(
+                    service=service,
+                    error_type=type(e).__name__
+                ).inc()
+                raise
+
+            finally:
+                duration = time.time() - start_time
+
+                api_latency.labels(
+                    service=service,
+                    endpoint=endpoint
+                ).observe(duration)
+
+                api_calls.labels(
+                    service=service,
+                    endpoint=endpoint,
+                    status=status
+                ).inc()
+
+                concurrent_requests.labels(service=service).dec()
+
+        return wrapper
+    return decorator
+
+
+# =========================
+# 🚀 INITIALIZATION
+# =========================
+
+ingestor = DataIngestor()
+vector_store = ingestor.ingest(load_existing=True)
+rag_chain = RAGChainBuilder(vector_store).build_chain()
+
+
+# =========================
+# 🌐 FLASK APP
+# =========================
+
+def create_app():
+    app = Flask(__name__)
+
+    # -------------------------
+    # BEFORE REQUEST
+    # -------------------------
+    @app.before_request
+    def before_request():
+        g.start_time = time.time()
+        ACTIVE_REQUESTS.inc()
+
+    # -------------------------
+    # AFTER REQUEST
+    # -------------------------
+    @app.after_request
+    def after_request(response):
+        latency = time.time() - g.start_time
+        endpoint = request.url_rule.rule if request.url_rule else request.path
+
+        REQUEST_LATENCY.labels(
+            method=request.method,
+            endpoint=endpoint
+        ).observe(latency)
+
+        REQUEST_COUNT.labels(
+            method=request.method,
+            endpoint=endpoint,
+            status=str(response.status_code)
+        ).inc()
+
+        ACTIVE_REQUESTS.dec()
+
+        return response
+
+    # -------------------------
+    # ROUTES
+    # -------------------------
+
+    @app.route("/")
+    def index():
+        return render_template("index.html")
+
+    @app.route("/get", methods=["POST"])
+    @track_api_call(service="rag", endpoint="/get")  # 🔥 NEW
+    def get_response():
+        try:
+            user_input = request.form.get("msg", "")
+
+            # 🔥 RAG latency
+            with RAG_LATENCY.time():
+
+                # 🔥 Optional vector DB tracking
+                with VECTOR_DB_LATENCY.labels(operation="similarity_search").time():
+                    response = rag_chain.invoke(
+                        {"input": user_input},
+                        config={"configurable": {"session_id": "user-session"}}
+                    )["answer"]
+
+            return response
+
+        except Exception as e:
+            ERROR_COUNT.labels(endpoint="/get").inc()
+            return f"Error: {str(e)}", 500
+
+    @app.route("/metrics")
+    def metrics():
+        return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
+
+    @app.route("/health")
+    def health():
+        return {"status": "healthy"}
+
+    return app
+
+
+# =========================
+# 🟢 RUN APP
+# =========================
+
+if __name__ == "__main__":
+    app = create_app()
+    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)

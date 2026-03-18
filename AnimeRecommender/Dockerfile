@@ -1,10 +1,10 @@
-## Multi-stage build using uv (optimized for CPU-only, no CUDA)
-## Reduces image size from 16GB to ~1-2GB by excluding CUDA dependencies
+## Single-stage build using uv (optimized for CPU-only, no CUDA)
+## Simpler approach - no multi-stage complexity
+## Reduces image size from 16GB to ~1-2GB
 
-## Stage 1: Builder
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim
 
-# Install build dependencies
+# Install build dependencies (needed for compilation)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
@@ -15,35 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Set work directory
-WORKDIR /app
-
-# Copy dependency files
-COPY pyproject.toml uv.lock ./
-
-# Install CPU-only PyTorch FIRST (before uv sync)
-# This prevents CUDA packages from being installed
-# Install to system so uv sync sees it and doesn't pull CUDA version
-RUN uv pip install --no-cache --system torch --index-url https://download.pytorch.org/whl/cpu
-
-# Install all dependencies using uv sync
-# This creates .venv virtual environment
-ENV UV_LINK_MODE=copy
-RUN uv sync --frozen --no-dev
-
-## Stage 2: Runtime (much smaller)
-FROM python:3.12-slim
-
-# Install only runtime dependencies (no build tools)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
-# Install uv for running the app
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
-
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -51,18 +22,28 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # Disable model caches to save space
     TRANSFORMERS_CACHE=/tmp/.cache \
     HF_HOME=/tmp/.cache \
-    TORCH_HOME=/tmp/.torch \
-    # Add venv to PATH
-    PATH="/app/.venv/bin:$PATH"
+    TORCH_HOME=/tmp/.torch
 
 WORKDIR /app
 
-# Copy ONLY the .venv virtual environment from builder
-# Don't copy system packages or .local
-COPY --from=builder /app/.venv /app/.venv
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
+
+# Install CPU-only PyTorch FIRST (before uv sync)
+# This prevents CUDA packages from being installed
+RUN uv pip install --no-cache torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install all dependencies using uv sync
+ENV UV_LINK_MODE=copy
+RUN uv sync --frozen --no-dev
 
 # Copy application code
 COPY . .
+
+# Remove build tools after installation to save space
+RUN apt-get purge -y build-essential && \
+    apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/* /root/.cache
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && \
