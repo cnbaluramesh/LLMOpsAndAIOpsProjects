@@ -8,6 +8,7 @@ from flipkart.rag_chain import RAGChainBuilder
 from dotenv import load_dotenv
 from functools import wraps
 import time
+import traceback
 
 load_dotenv()
 
@@ -40,7 +41,7 @@ ERROR_COUNT = Counter(
 )
 
 # =========================
-# 🚀 API PERFORMANCE METRICS (NEW)
+# 🚀 API PERFORMANCE METRICS
 # =========================
 
 api_calls = Counter(
@@ -86,7 +87,7 @@ VECTOR_DB_LATENCY = Histogram(
 )
 
 # =========================
-# 🎯 DECORATOR (SYNC)
+# 🎯 DECORATOR (FIXED)
 # =========================
 
 def track_api_call(service: str, endpoint: str):
@@ -98,14 +99,26 @@ def track_api_call(service: str, endpoint: str):
             status = 'success'
 
             try:
-                return func(*args, **kwargs)
+                response = func(*args, **kwargs)
+
+                # ✅ Handle Flask response formats
+                if isinstance(response, tuple):
+                    status_code = response[1]
+                    if status_code >= 400:
+                        status = 'error'
+                else:
+                    status_code = 200
+
+                return response
 
             except Exception as e:
                 status = 'error'
+
                 api_errors.labels(
                     service=service,
                     error_type=type(e).__name__
                 ).inc()
+
                 raise
 
             finally:
@@ -132,9 +145,16 @@ def track_api_call(service: str, endpoint: str):
 # 🚀 INITIALIZATION
 # =========================
 
+print("🚀 Initializing DataIngestor...", flush=True)
 ingestor = DataIngestor()
+
+print("📦 Loading Vector Store...", flush=True)
 vector_store = ingestor.ingest(load_existing=True)
+
+print("🧠 Building RAG Chain...", flush=True)
 rag_chain = RAGChainBuilder(vector_store).build_chain()
+
+print("✅ Initialization Complete", flush=True)
 
 
 # =========================
@@ -157,21 +177,23 @@ def create_app():
     # -------------------------
     @app.after_request
     def after_request(response):
-        latency = time.time() - g.start_time
-        endpoint = request.url_rule.rule if request.url_rule else request.path
+        try:
+            latency = time.time() - getattr(g, "start_time", time.time())
+            endpoint = request.url_rule.rule if request.url_rule else request.path
 
-        REQUEST_LATENCY.labels(
-            method=request.method,
-            endpoint=endpoint
-        ).observe(latency)
+            REQUEST_LATENCY.labels(
+                method=request.method,
+                endpoint=endpoint
+            ).observe(latency)
 
-        REQUEST_COUNT.labels(
-            method=request.method,
-            endpoint=endpoint,
-            status=str(response.status_code)
-        ).inc()
+            REQUEST_COUNT.labels(
+                method=request.method,
+                endpoint=endpoint,
+                status=str(response.status_code)
+            ).inc()
 
-        ACTIVE_REQUESTS.dec()
+        finally:
+            ACTIVE_REQUESTS.dec()
 
         return response
 
@@ -187,7 +209,10 @@ def create_app():
     @track_api_call(service="rag", endpoint="/get")
     def get_response():
         try:
-            user_input = request.form.get("msg", "")
+            user_input = request.form.get("msg", "").strip()
+
+            if not user_input:
+                return "Please enter a message.", 400
 
             with RAG_LATENCY.time():
                 with VECTOR_DB_LATENCY.labels(operation="similarity_search").time():
@@ -197,26 +222,26 @@ def create_app():
                         config={"configurable": {"session_id": "user-session"}}
                     )
 
-            print("DEBUG RESULT:", result, flush=True)
+            print("✅ DEBUG RESULT:", result, flush=True)
 
             # ✅ Safe extraction
             if isinstance(result, dict):
-                return (
+                response_text = (
                     result.get("answer")
                     or result.get("output")
                     or result.get("result")
-                    or str(result)
                 )
+                return response_text if response_text else str(result)
 
             return str(result)
 
         except Exception as e:
-            import traceback
             print("🔥 ERROR:", str(e), flush=True)
             traceback.print_exc()
 
             ERROR_COUNT.labels(endpoint="/get").inc()
-            return f"Error: {str(e)}", 500
+
+            return "Internal Server Error. Check logs.", 500
 
     @app.route("/metrics")
     def metrics():
