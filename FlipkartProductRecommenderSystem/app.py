@@ -184,24 +184,37 @@ def create_app():
         return render_template("index.html")
 
     @app.route("/get", methods=["POST"])
-    @track_api_call(service="rag", endpoint="/get")  # 🔥 NEW
+    @track_api_call(service="rag", endpoint="/get")
     def get_response():
         try:
             user_input = request.form.get("msg", "")
 
-            # 🔥 RAG latency
             with RAG_LATENCY.time():
-
-                # 🔥 Optional vector DB tracking
                 with VECTOR_DB_LATENCY.labels(operation="similarity_search").time():
-                    response = rag_chain.invoke(
+
+                    result = rag_chain.invoke(
                         {"input": user_input},
                         config={"configurable": {"session_id": "user-session"}}
-                    )["answer"]
+                    )
 
-            return response
+            print("DEBUG RESULT:", result, flush=True)
+
+            # ✅ Safe extraction
+            if isinstance(result, dict):
+                return (
+                    result.get("answer")
+                    or result.get("output")
+                    or result.get("result")
+                    or str(result)
+                )
+
+            return str(result)
 
         except Exception as e:
+            import traceback
+            print("🔥 ERROR:", str(e), flush=True)
+            traceback.print_exc()
+
             ERROR_COUNT.labels(endpoint="/get").inc()
             return f"Error: {str(e)}", 500
 
