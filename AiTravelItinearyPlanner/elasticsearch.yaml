@@ -33,7 +33,7 @@ spec:
             - name: discovery.type
               value: single-node
             - name: ES_JAVA_OPTS
-              value: "-Xms512m -Xmx512m"
+              value: "-Xms512m -Xmx512m -Des.cgroups.hierarchy.override=/"
             - name: xpack.security.enabled
               value: "false"
           ports:
